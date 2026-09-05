@@ -1,4 +1,6 @@
 #include "stixel_world.h"
+#include <queue>
+#include <vector>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -436,6 +438,9 @@ static Line calcRoadModelVD(const cv::Mat1f& disparity, const CameraParameters& 
 static float calcAverageDisparity(const cv::Mat& disparity, const cv::Rect& rect, int minDisp, int maxDisp)
 {
 	const cv::Mat dispROI = disparity(rect & cv::Rect(0, 0, disparity.cols, disparity.rows));
+	if (dispROI.cols <= 0 || dispROI.rows <= 0) {
+		return -1.0F;
+	}
 	const int histSize[] = { maxDisp - minDisp };
 	const float range[] = { static_cast<float>(minDisp), static_cast<float>(maxDisp) };
 	const float* ranges[] = { range };
@@ -447,6 +452,49 @@ static float calcAverageDisparity(const cv::Mat& disparity, const cv::Rect& rect
 	cv::minMaxIdx(hist, NULL, NULL, NULL, maxIdx);
 
 	return (range[1] - range[0]) * maxIdx[0] / histSize[0] + range[0];
+}
+
+static float calcMaxPercentDisparity(const cv::Mat& disparity, const cv::Rect& rect,
+							const int minDisp, const int maxDisp)
+{
+	const cv::Rect& bounds = cv::Rect(0, 0, disparity.cols, disparity.rows);
+	const cv::Rect roi = rect & bounds;
+	if (roi.width <= 0 || roi.height <= 0) {
+		return -1.0F;
+	}
+
+	const float minD = static_cast<float>(minDisp);
+	const float maxD = static_cast<float>(maxDisp);
+	std::priority_queue<float, std::vector<float>, decltype(std::less<float>())> pq;
+	float d;
+	int cnt = 0;
+	for (int v = roi.y; v < roi.y + roi.height; ++v) {
+		const float* rowPtr = disparity.ptr<float>(v) + roi.x;
+		const float* endPtr = rowPtr + roi.width;
+		for (const float* p = rowPtr; p < endPtr; ++p) {
+			d = *p;
+			if (d >= minD && d < maxD) {
+				pq.push(d);
+				cnt++;
+			}
+		}
+	}
+	if(cnt == 0) return -1.0F;
+	if( cnt <= 3 ) {
+		return pq.top();
+	}
+	if( cnt <= 30 ) {
+		pq.pop();
+		pq.pop();
+		return pq.top();
+	}
+	cnt = cnt / 10;
+	while(cnt > 1 && pq.empty() == false) {
+		pq.pop();
+		cnt--;
+	}
+	if(pq.empty() == false) return pq.top();
+	return -1.0F;
 }
 
 StixelWorld::StixelWorld(const Parameters & param) : param_(param)
@@ -530,7 +578,11 @@ void StixelWorld::compute(const cv::Mat& disparity, std::vector<Stixel>& stixels
 		stixel.vT = vT;
 		stixel.vB = vB;
 		stixel.width = stixelWidth;
-		stixel.disp = calcAverageDisparity(disparity, stixelRegion, param_.minDisparity, param_.maxDisparity);
+		if(isMaxPercent) {
+			stixel.disp = calcMaxPercentDisparity(disparity, stixelRegion, param_.minDisparity, param_.maxDisparity);
+		} else {
+			stixel.disp = calcAverageDisparity(disparity, stixelRegion, param_.minDisparity, param_.maxDisparity);
+		}
 		stixels.push_back(stixel);
 	}
 }

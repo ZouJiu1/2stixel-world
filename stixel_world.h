@@ -90,6 +90,7 @@ public:
 private:
 	std::vector<int> lowerPath_, upperPath_;
 	Parameters param_;
+	bool isMaxPercent = true;
 };
 
 #endif // !__STIXEL_WORLD_H__
